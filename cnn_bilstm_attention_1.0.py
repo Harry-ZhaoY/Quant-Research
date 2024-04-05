@@ -6,8 +6,9 @@ from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Bidirectional, LSTM, Attention, Concatenate
+from keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Bidirectional, LSTM, Attention, Concatenate, Layer
 from keras.models import Model
+from tensorflow.keras import backend as K
 from keras.callbacks import EarlyStopping
 
 # Function to fetch market data
@@ -39,6 +40,30 @@ def create_sequences(data, sequence_length):
     return np.array(xs), np.array(ys)
 
 # Build CNN-BiLSTM model
+class AttentionLayer(Layer):
+    def __init__(self, **kwargs):
+        super(AttentionLayer, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.W = self.add_weight(name='attention_weight', 
+                                 shape=(input_shape[-1], 1),
+                                 initializer='random_normal',
+                                 trainable=True)
+        super(AttentionLayer, self).build(input_shape)
+
+    def call(self, inputs, **kwargs):
+        attention_scores = K.dot(inputs, self.W)
+        attention_scores = K.squeeze(attention_scores, -1)
+        attention_scores = K.softmax(attention_scores)
+
+        weighted_outputs = inputs * K.expand_dims(attention_scores)
+        output = K.sum(weighted_outputs, axis=1)
+
+        return output
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[-1])
+
 def build_cnn_bilstm_model(input_shape_cnn, input_shape_lstm):
      # CNN Layer
     input_cnn = Input(shape=input_shape_cnn)
@@ -49,17 +74,10 @@ def build_cnn_bilstm_model(input_shape_cnn, input_shape_lstm):
 
     # LSTM Layer
     input_lstm = Input(shape=input_shape_lstm)
-    lstm_out = LSTM(64, return_sequences=True)(input_lstm)
+    lstm_out = Bidirectional(LSTM(64, return_sequences=True))(input_lstm)
 
-    # Instead of flattening LSTM output, we should directly use it with attention
-    # This ensures we have the [batch_size, sequence_length, features] shape
-
-    # Attention Mechanism - Adjusted for proper input shapes
-    # Assuming sequence_length for lstm_out is preserved to be compatible with Attention
-    query_value_inputs = lstm_out  # Directly using LSTM output
-
-    # Apply attention
-    attention_out = Attention()([query_value_inputs, query_value_inputs])
+    # Attention Layer
+    attention_out = AttentionLayer()(lstm_out)
     
     # After attention, you can decide to flatten or further process depending on the next steps
     attention_flatten = Flatten()(attention_out)
@@ -229,9 +247,9 @@ def main(ticker_symbol):
 
     
 # Define constants and configuration at the start
-SEQUENCE_LENGTH = 15
+SEQUENCE_LENGTH = 150
 INITIAL_INVESTMENT = 10000
-TICKER_SYMBOL = "SPY"
+TICKER_SYMBOL = "QQQ"
 EPOCHS = 100
 BATCH_SIZE = 32
 PATIENCE = 15
